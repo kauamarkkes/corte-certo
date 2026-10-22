@@ -2,12 +2,17 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 const dbFilePath = process.env.DB_PATH || path.join(__dirname, 'database.json');
+
+const STATUSES = ['pendente', 'confirmado', 'concluido', 'cancelado'];
+
+const isPositiveNumber = (value) => value !== '' && value !== null && Number.isFinite(Number(value)) && Number(value) > 0;
 
 const readDb = () => {
     try {
@@ -30,19 +35,19 @@ app.get('/api/services', (req, res) => {
 
 app.post('/api/services', (req, res) => {
     const { name, price, duration, icon } = req.body;
-    if (!name || !price || !duration) {
-        return res.status(400).json({ error: 'Preencha nome, preÃƒÂ§o e duraÃƒÂ§ÃƒÂ£o.' });
+    if (typeof name !== 'string' || !name.trim() || !isPositiveNumber(price) || !isPositiveNumber(duration)) {
+        return res.status(400).json({ error: 'Informe nome, preço e duração válidos (maiores que zero).' });
     }
 
     const db = readDb();
     if (!db.services) db.services = [];
 
     const newService = {
-        id: Date.now().toString(),
+        id: crypto.randomUUID(),
         name,
         price: Number(price),
         duration: Number(duration),
-        icon: icon || 'Ã¢Å“â€š',
+        icon: icon || '✂',
         active: true
     };
 
@@ -61,7 +66,17 @@ app.put('/api/services/:id', (req, res) => {
     const service = db.services.find(s => String(s.id) === String(id));
     
     if (!service) {
-        return res.status(404).json({ error: 'ServiÃƒÂ§o nÃƒÂ£o encontrado.' });
+        return res.status(404).json({ error: 'Serviço não encontrado.' });
+    }
+
+    if (name !== undefined && (typeof name !== 'string' || !name.trim())) {
+        return res.status(400).json({ error: 'O nome do serviço não pode ser vazio.' });
+    }
+    if (price !== undefined && !isPositiveNumber(price)) {
+        return res.status(400).json({ error: 'O preço deve ser um número maior que zero.' });
+    }
+    if (duration !== undefined && !isPositiveNumber(duration)) {
+        return res.status(400).json({ error: 'A duração deve ser um número maior que zero.' });
     }
 
     if (name) service.name = name;
@@ -81,12 +96,12 @@ app.delete('/api/services/:id', (req, res) => {
     
     const index = db.services.findIndex(s => String(s.id) === String(id));
     if (index === -1) {
-        return res.status(404).json({ error: 'ServiÃƒÂ§o nÃƒÂ£o encontrado.' });
+        return res.status(404).json({ error: 'Serviço não encontrado.' });
     }
 
     db.services.splice(index, 1);
     writeDb(db);
-    res.json({ message: 'ServiÃƒÂ§o removido com sucesso.' });
+    res.json({ message: 'Serviço removido com sucesso.' });
 });
 
 app.get('/api/barber', (req, res) => {
@@ -123,29 +138,52 @@ app.post('/api/appointments', (req, res) => {
     const { clientName, clientPhone, serviceId, date, time } = req.body;
 
     if (!clientName || !clientPhone || !serviceId || !date || !time) {
-        return res.status(400).json({ error: 'Preencha todos os campos obrigatÃƒÂ³rios.' });
+        return res.status(400).json({ error: 'Preencha todos os campos obrigatórios.' });
+    }
+
+    const phoneDigits = String(clientPhone).replace(/\D/g, '');
+    if (phoneDigits.length < 10 || phoneDigits.length > 11) {
+        return res.status(400).json({ error: 'Telefone inválido.' });
+    }
+
+    const dateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(date));
+    const [year, month, day] = dateMatch ? dateMatch.slice(1).map(Number) : [];
+    const parsedDate = dateMatch ? new Date(year, month - 1, day) : null;
+    if (!parsedDate || parsedDate.getFullYear() !== year || parsedDate.getMonth() !== month - 1 || parsedDate.getDate() !== day) {
+        return res.status(400).json({ error: 'Data inválida. Use o formato AAAA-MM-DD.' });
+    }
+
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(time))) {
+        return res.status(400).json({ error: 'Hora inválida. Use o formato HH:MM.' });
+    }
+
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+    if (parsedDate < today || (parsedDate.getTime() === today.getTime() && timeToMinutes(time) <= nowMinutes)) {
+        return res.status(400).json({ error: 'Não é possível agendar em data ou horário que já passou.' });
     }
 
     const db = readDb();
     if (!db.services) db.services = [];
     if (!db.appointments) db.appointments = [];
 
-    let service = db.services.find(s => 
-        String(s.id) === String(serviceId) || 
-        s.name.toLowerCase() === String(serviceId).toLowerCase() ||
-        String(serviceId).includes(String(s.id))
-    );
-
-    if (!service && db.services.length > 0) {
-        service = db.services[0];
-    }
+    const service = db.services.find(s => String(s.id) === String(serviceId) && s.active !== false);
 
     if (!service) {
-        return res.status(400).json({ error: 'Nenhum serviÃƒÂ§o disponÃƒÂ­vel no sistema.' });
+        return res.status(400).json({ error: 'Serviço não encontrado ou inativo.' });
     }
 
     const newStartMin = timeToMinutes(time);
     const newEndMin = newStartMin + (service.duration || 30);
+
+    const dayHours = (db.hours || [])[parsedDate.getDay()];
+    if (!dayHours || !dayHours.open) {
+        return res.status(400).json({ error: 'A barbearia está fechada neste dia.' });
+    }
+    if (newStartMin < timeToMinutes(dayHours.start) || newEndMin > timeToMinutes(dayHours.end)) {
+        return res.status(400).json({ error: `Horário fora do expediente (${dayHours.start} às ${dayHours.end}).` });
+    }
 
     for (const app of db.appointments) {
         if (app.date === date && app.status !== 'cancelado') {
@@ -157,14 +195,18 @@ app.post('/api/appointments', (req, res) => {
 
             if (newStartMin < existingEndMin && existingStartMin < newEndMin) {
                 return res.status(400).json({ 
-                    error: 'Este horÃƒÂ¡rio conflita com outro agendamento existente.' 
+                    error: 'Este horário conflita com outro agendamento existente.' 
                 });
             }
         }
     }
 
-    const id = Date.now().toString();
-    const code = `#${id.slice(-4).toUpperCase()}`; 
+    const id = crypto.randomUUID();
+    const usedCodes = new Set(db.appointments.map(a => a.code));
+    let code;
+    do {
+        code = `#CC-${String(crypto.randomInt(0, 10000)).padStart(4, '0')}`;
+    } while (usedCodes.has(code));
 
     const newAppointment = {
         id,
@@ -174,7 +216,7 @@ app.post('/api/appointments', (req, res) => {
         serviceId: service.id,
         date,
         time,
-        status: 'Confirmed'
+        status: 'confirmado'
     };
 
     db.appointments.push(newAppointment);
@@ -187,13 +229,17 @@ app.patch('/api/appointments/:id/status', (req, res) => {
     const { id } = req.params;
     const { status } = req.body;
 
+    if (status !== undefined && !STATUSES.includes(status)) {
+        return res.status(400).json({ error: 'Status inválido.' });
+    }
+
     const db = readDb();
     if (!db.appointments) db.appointments = [];
 
     const appItem = db.appointments.find(a => String(a.id) === String(id));
 
     if (!appItem) {
-        return res.status(404).json({ error: 'Agendamento nÃƒÂ£o encontrado.' });
+        return res.status(404).json({ error: 'Agendamento não encontrado.' });
     }
 
     appItem.status = status || appItem.status;
@@ -209,7 +255,7 @@ app.delete('/api/appointments/:id', (req, res) => {
 
     const appItem = db.appointments.find(a => String(a.id) === String(id));
     if (!appItem) {
-        return res.status(404).json({ error: 'Agendamento nÃƒÂ£o encontrado.' });
+        return res.status(404).json({ error: 'Agendamento não encontrado.' });
     }
 
     appItem.status = 'cancelado';

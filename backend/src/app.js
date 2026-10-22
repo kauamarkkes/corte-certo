@@ -99,6 +99,11 @@ app.delete('/api/services/:id', (req, res) => {
         return res.status(404).json({ error: 'Serviço não encontrado.' });
     }
 
+    const inUse = (db.appointments || []).some(a => String(a.serviceId) === String(id) && a.status !== 'cancelado');
+    if (inUse) {
+        return res.status(409).json({ error: 'Existem agendamentos ativos com esse serviço. Desative-o em vez de remover.' });
+    }
+
     db.services.splice(index, 1);
     writeDb(db);
     res.json({ message: 'Serviço removido com sucesso.' });
@@ -133,11 +138,19 @@ const timeToMinutes = (timeStr) => {
     return hours * 60 + minutes;
 };
 
+const hasConflict = (db, date, startMin, endMin, ignoreId = null) => db.appointments.some(appt => {
+    if (appt.date !== date || appt.status === 'cancelado' || appt.id === ignoreId) return false;
+    const existingService = db.services.find(s => String(s.id) === String(appt.serviceId));
+    const existingStart = timeToMinutes(appt.time);
+    const existingEnd = existingStart + (existingService ? existingService.duration : 30);
+    return startMin < existingEnd && existingStart < endMin;
+});
+
 
 app.post('/api/appointments', (req, res) => {
     const { clientName, clientPhone, serviceId, date, time } = req.body;
 
-    if (!clientName || !clientPhone || !serviceId || !date || !time) {
+    if (typeof clientName !== 'string' || !clientName.trim() || !clientPhone || !serviceId || !date || !time) {
         return res.status(400).json({ error: 'Preencha todos os campos obrigatórios.' });
     }
 
@@ -185,27 +198,16 @@ app.post('/api/appointments', (req, res) => {
         return res.status(400).json({ error: `Horário fora do expediente (${dayHours.start} às ${dayHours.end}).` });
     }
 
-    for (const app of db.appointments) {
-        if (app.date === date && app.status !== 'cancelado') {
-            const existingService = db.services.find(s => String(s.id) === String(app.serviceId));
-            const existingDuration = existingService ? existingService.duration : 30;
-            
-            const existingStartMin = timeToMinutes(app.time);
-            const existingEndMin = existingStartMin + existingDuration;
-
-            if (newStartMin < existingEndMin && existingStartMin < newEndMin) {
-                return res.status(400).json({ 
-                    error: 'Este horário conflita com outro agendamento existente.' 
-                });
-            }
-        }
+    if (hasConflict(db, date, newStartMin, newEndMin)) {
+        return res.status(400).json({ error: 'Este horário conflita com outro agendamento existente.' });
     }
 
     const id = crypto.randomUUID();
     const usedCodes = new Set(db.appointments.map(a => a.code));
+    const codeRange = Math.max(10000, usedCodes.size * 10);
     let code;
     do {
-        code = `#CC-${String(crypto.randomInt(0, 10000)).padStart(4, '0')}`;
+        code = `#CC-${String(crypto.randomInt(0, codeRange)).padStart(4, '0')}`;
     } while (usedCodes.has(code));
 
     const newAppointment = {
@@ -240,6 +242,16 @@ app.patch('/api/appointments/:id/status', (req, res) => {
 
     if (!appItem) {
         return res.status(404).json({ error: 'Agendamento não encontrado.' });
+    }
+
+    if (status && status !== 'cancelado') {
+        if (!db.services) db.services = [];
+        const service = db.services.find(s => String(s.id) === String(appItem.serviceId));
+        const startMin = timeToMinutes(appItem.time);
+        const endMin = startMin + (service ? service.duration : 30);
+        if (hasConflict(db, appItem.date, startMin, endMin, appItem.id)) {
+            return res.status(400).json({ error: 'Este horário conflita com outro agendamento existente.' });
+        }
     }
 
     appItem.status = status || appItem.status;

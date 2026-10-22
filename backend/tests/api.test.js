@@ -176,3 +176,29 @@ describe('Serviços e autenticação', () => {
         expect(res.status).toBe(401);
     });
 });
+
+describe('Defeitos adicionais', () => {
+    test('TC-23 clientName só com espaços retorna 400 (BUG-015)', async () => {
+        const res = await book({ clientName: '   ' });
+        expect(res.status).toBe(400);
+    });
+
+    test('TC-24 reativar agendamento cancelado em horário já ocupado retorna 400 (BUG-013)', async () => {
+        const first = await book();
+        expect(first.status).toBe(201);
+        await request(app).delete(`/api/appointments/${first.body.id}`);
+        expect((await book()).status).toBe(201);
+        const res = await request(app)
+            .patch(`/api/appointments/${first.body.id}/status`)
+            .send({ status: 'confirmado' });
+        expect(res.status).toBe(400);
+    });
+
+    test('TC-25 remover serviço com agendamento ativo retorna 409 (BUG-014)', async () => {
+        expect((await book({ serviceId: 's1' })).status).toBe(201);
+        const blocked = await request(app).delete('/api/services/s1');
+        expect(blocked.status).toBe(409);
+        const free = await request(app).delete('/api/services/s2');
+        expect(free.status).toBe(200);
+    });
+});

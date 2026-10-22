@@ -103,7 +103,8 @@ function timesPanel() {
     </div>`;
 }
 
-function stepDateTime() {
+async function stepDateTime() {
+  await store.syncBookingsWithBackend();
   return `
     ${progress(3)}
     ${header('Reserve seu momento', 'Quando fica melhor?', `Escolha um dia e um dos horários disponíveis. Agendamentos em até ${MAX_DAYS_AHEAD} dias.`)}
@@ -117,8 +118,9 @@ function stepDateTime() {
     </div>`;
 }
 
-/** Re-renderiza só calendário/horários (sem reanimar a página inteira). */
-function refreshDateTime() {
+/** Re-renderiza só calendário/horários. */
+async function refreshDateTime() {
+  await store.syncBookingsWithBackend();
   document.getElementById('calSlot').innerHTML = renderCalendar({ year: draft.calYear, month: draft.calMonth, selected: draft.date, barberId: draft.barberId });
   document.getElementById('timesSlot').innerHTML = timesPanel();
   document.querySelector('[data-next]').disabled = !(draft.date && draft.time);
@@ -181,26 +183,23 @@ function summaryRows(b) {
   const s = store.getService(b.serviceId);
   return `
     <div class="summary">
-      <div class="summary-row"><span>Serviço</span><strong>${esc(s.name)}</strong></div>
-      <div class="summary-row"><span>Barbeiro</span><strong>${esc(store.getBarber(b.barberId).name)}</strong></div>
+      <div class="summary-row"><span>Serviço</span><strong>${esc(s ? s.name : 'Corte/Serviço')}</strong></div>
+      <div class="summary-row"><span>Barbeiro</span><strong>${esc(store.getBarber(b.barberId)?.name || 'Principal')}</strong></div>
       <div class="summary-row"><span>Data</span><strong>${formatDateBR(b.date)}</strong></div>
       <div class="summary-row"><span>Horário</span><strong>${b.time}</strong></div>
-      <div class="summary-row"><span>Duração</span><strong>${s.duration} minutos</strong></div>
-      <div class="summary-row"><span>Total</span><strong>${money(s.price)}</strong></div>
+      <div class="summary-row"><span>Duração</span><strong>${s ? s.duration : '30'} minutos</strong></div>
+      <div class="summary-row"><span>Total</span><strong>${money(s && s.price ? s.price : 0)}</strong></div>
     </div>`;
 }
 
 function stepSuccess() {
-  const b = store.getBooking(draft.lastBookingId);
-  if (!b) { draft.step = 1; return stepServices(); }
   return `
     ${progress(5)}
     <div class="success-hero">
       <div class="success-icon">✓</div>
       <p class="eyebrow">Tudo certo</p>
       <h1 class="page-title">Seu horário está confirmado!</h1>
-      <p class="lede">Guarde o código <strong>#${b.code}</strong>. Agora é só chegar 5 minutos antes.</p>
-      ${summaryRows(b)}
+      <p class="lede">Agora é só chegar 5 minutos antes.</p>
     </div>
     <div class="actions">
       <button class="btn" data-action="new">Novo agendamento</button>
@@ -209,16 +208,15 @@ function stepSuccess() {
 }
 
 /*  Meus agendamentos  */
-function myBookingsView() {
-  const list = store.myBookingIds().map(store.getBooking).filter(Boolean)
-    .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+async function myBookingsView() {
+  const list = await store.getMyAppointments();
   const today = todayISO();
   const tickets = list.map((b) => {
     const cancelled = b.status === 'cancelado';
     const past = b.date < today;
     return `
       <article class="card ticket ${cancelled ? 'cancelled' : ''}">
-        <div class="ticket-head"><h2>${formatLongDate(b.date)}</h2><span class="code">#${b.code}</span></div>
+        <div class="ticket-head"><h2>${formatLongDate(b.date)}</h2><span class="code">${b.code}</span></div>
         <div class="ticket-body">
           <span class="pill ${cancelled ? 'pink' : past ? '' : 'price'}">${cancelled ? 'Cancelado' : past ? 'Realizado' : b.status[0].toUpperCase() + b.status.slice(1)}</span>
           ${summaryRows(b)}
@@ -233,21 +231,28 @@ function myBookingsView() {
 }
 
 /*  Renderização  + eventos  */
-let view = 'flow'; // 'flow' | 'mine'
+let view = 'flow'; // 'flow' | 'mine' | 'plans'
 
-export function render(direction = 'forward') {
-  if (view === 'mine') { mount(`<div class="wrap">${myBookingsView()}</div>`, direction); return; }
+export async function render(direction = 'forward') {
+  if (view === 'mine') { 
+    const content = await myBookingsView();
+    mount(`<div class="wrap">${content}</div>`, direction); 
+    return; 
+  }
   if (view === 'plans') { mount(`<div class="wrap">${plansScreen()}</div>`, direction); return; }
   if (draft.step === 3) autoPickDate();
+  
   const steps = { 1: stepServices, 2: stepBarbers, 3: stepDateTime, 4: stepForm, 5: stepSuccess };
-  mount(`<div class="wrap">${steps[draft.step]()}</div>`, direction);
+  const content = draft.step === 3 ? await steps[3]() : steps[draft.step]();
+  mount(`<div class="wrap">${content}</div>`, direction);
 }
+
 export function resetFlow() {
   Object.assign(draft, { step: 1, serviceId: null, barberId: null, date: null, time: null, lastBookingId: null });
   view = 'flow'; saveDraft(); render('back');
 }
 
-/* Máscara para o CPF */
+/* Máscara para CPF */
 function maskCPF(value) {
   return value
     .replace(/\D/g, '') 
@@ -257,7 +262,7 @@ function maskCPF(value) {
     .replace(/(\d{3})(\d{1,2})$/, '$1-$2');
 }
 
-/* Delegação de eventos: um único listener cobre todas as etapas. */
+/* Delegação de eventos */
 export function bindCustomerEvents(root) {
   root.addEventListener('click', async (e) => {
     const t = e.target.closest('button');
@@ -277,18 +282,21 @@ export function bindCustomerEvents(root) {
     if (t.dataset.action === 'mine') { view = 'mine'; return render(); }
     if (t.dataset.action === 'plans') { view = 'plans'; return render(); }
     if (t.dataset.action === 'services') { view = 'flow'; draft.step = 1; return render('back'); }
+    
     if (t.dataset.cancel) {
-      const b = store.getBooking(t.dataset.cancel);
       const ok = await confirmDialog({
         title: 'Cancelar seu horário?',
-        text: `Esta ação libera o horário de <strong>${formatDateBR(b.date).slice(0, 5)} às ${b.time}</strong> para outra pessoa.`,
+        text: `Esta ação vai cancelar este agendamento.`,
         confirm: 'Sim, cancelar',
       });
-      if (ok) { store.setBookingStatus(b.id, 'cancelado'); toast('Agendamento cancelado.'); render(); }
+      if (ok) {
+        await store.setBookingStatus(t.dataset.cancel, 'cancelado');
+        toast('Agendamento cancelado.');
+        render();
+      }
     }
   });
 
- // Máscara de telefone, CPF + validação em tempo real
   root.addEventListener('input', (e) => {
     if (e.target.id === 'fPhone' || e.target.id === 'pPhone') {
       e.target.value = maskPhone(e.target.value);
@@ -301,10 +309,10 @@ export function bindCustomerEvents(root) {
       if (e.target.classList.contains('error')) validateField(e.target);
     }
   });
+  
   root.addEventListener('focusout', (e) => { if (e.target.closest?.('#bookingForm') && e.target.value) validateField(e.target); });
 
-  root.addEventListener('submit', (e) => {
-    // Trata o envio do formulário de planos mensais
+  root.addEventListener('submit', async (e) => {
     if (e.target.id === 'planSubscriptionForm') {
       e.preventDefault();
       toast('Assinatura realizada com sucesso!');
@@ -317,11 +325,15 @@ export function bindCustomerEvents(root) {
     const form = e.target;
     const valid = [form.elements.namedItem('name'), form.elements.namedItem('phone')].map(validateField).every(Boolean);
     if (!valid) { form.querySelector('.error')?.focus(); return; }
+    
     try {
-      const booking = store.createBooking({ ...draft, name: form.elements.namedItem('name').value, phone: form.elements.namedItem('phone').value });
-      store.rememberBooking(booking.id);
+      const booking = await store.createBooking({ 
+        ...draft, 
+        name: form.elements.namedItem('name').value, 
+        phone: form.elements.namedItem('phone').value 
+      });
       draft.lastBookingId = booking.id;
-      toast(`Agendamento #${booking.code} criado!`);
+      toast(`Agendamento ${booking.code} criado!`);
       goStep(5);
     } catch (err) {
       document.getElementById('formError').innerHTML = `<div class="notice error">! ${err.message}</div>`;
@@ -331,21 +343,20 @@ export function bindCustomerEvents(root) {
   });
 }
 
-export const showCustomer = () => { view = 'flow'; render(); };
-
+export async function showCustomer() { 
+  view = 'flow'; 
+  await store.syncBookingsWithBackend();
+  render(); 
+};
 
 /*  Tela: Planos Mensais  */
-
 export function plansScreen() {
   return `
     <span class="eyebrow">Economize todo mês</span>
     <h1 class="page-title">PLANOS MENSAIS</h1>
     <p class="lede">Corte o cabelo e faça a barba quantas vezes quiser com valor fixo no mês.</p>
 
-    <!-- Cards de Planos -->
     <div class="grid cols-3 stagger" style="margin-bottom: 30px;">
-      
-      <!-- Plano 1 -->
       <div class="card" style="padding: 20px; background: var(--paper); border: var(--line); box-shadow: var(--shadow);">
         <span class="pill" style="background: var(--lilac); font-weight: 900;">BÁSICO</span>
         <h2 style="font-family: 'Archivo Black'; font-size: 28px; margin: 10px 0 5px;">Cabelo Livre</h2>
@@ -361,7 +372,6 @@ export function plansScreen() {
         <button type="button" class="btn primary" style="width: 100%;" onclick="document.getElementById('planForm').scrollIntoView({behavior: 'smooth'})">Assinar Básico</button>
       </div>
 
-      <!-- Plano 2 (Destaque) -->
       <div class="card" style="padding: 20px; background: var(--paper); border: 4px solid var(--ink); box-shadow: 8px 8px 0 var(--green);">
         <span class="pill" style="background: var(--green); font-weight: 900;">POPULAR</span>
         <h2 style="font-family: 'Archivo Black'; font-size: 28px; margin: 10px 0 5px;">VIP Combo</h2>
@@ -376,10 +386,8 @@ export function plansScreen() {
         </ul>
         <button type="button" class="btn primary" style="width: 100%; background: var(--green);" onclick="document.getElementById('planForm').scrollIntoView({behavior: 'smooth'})">Assinar VIP</button>
       </div>
-
     </div>
 
-    <!-- Formulario de Cadastro de Assinatura -->
     <div id="planForm" class="form-card" style="max-width: 600px; margin: 0 auto; padding: 25px; background: var(--paper); border: var(--line); box-shadow: var(--shadow);">
       <span class="eyebrow">Cadastro da Assinatura</span>
       <h2 style="font-family: 'Archivo Black'; font-size: 24px; margin-top: 5px;">Seus Dados</h2>

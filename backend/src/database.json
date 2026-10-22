@@ -1,0 +1,75 @@
+{
+  "services": [
+    {
+      "id": "1",
+      "name": "Corte de Cabelo",
+      "price": 40,
+      "duration": 30,
+      "active": true,
+      "icon": "✂"
+    },
+    {
+      "id": "2",
+      "name": "Barba",
+      "price": 30,
+      "duration": 20,
+      "active": true,
+      "icon": "🪒"
+    },
+    {
+      "id": "3",
+      "name": "Corte + Barba",
+      "price": 60,
+      "duration": 50,
+      "active": true,
+      "icon": "💈"
+    }
+  ],
+  "appointments": [
+  ],
+  "barber": [
+    {
+      "id": "1",
+      "name": "Barbeiro Principal",
+      "active": true
+    }
+  ],
+  "hours": [
+    {
+      "open": false,
+      "start": "09:00",
+      "end": "19:00"
+    },
+    {
+      "open": true,
+      "start": "09:00",
+      "end": "19:00"
+    },
+    {
+      "open": true,
+      "start": "09:00",
+      "end": "19:00"
+    },
+    {
+      "open": true,
+      "start": "09:00",
+      "end": "19:00"
+    },
+    {
+      "open": true,
+      "start": "09:00",
+      "end": "19:00"
+    },
+    {
+      "open": true,
+      "start": "09:00",
+      "end": "19:00"
+    },
+    {
+      "open": false,
+      "start": "09:00",
+      "end": "19:00"
+    }
+  ],
+  "blocks": []
+}

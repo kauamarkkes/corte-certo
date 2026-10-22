@@ -1,11 +1,8 @@
 /**
- * store.js — Estado da aplicação com persistência em localStorage.
- *
- * Toda leitura/escrita de dados passa por aqui. Para migrar para um backend,
- * basta reimplementar estas funções usando fetch() mantendo as mesmas assinaturas.
+ * store.js — Estado da aplicação com integração ao backend e persistência no localStorage.
  */
 import { SEED, SLOT_STEP } from './data.js';
-import { toMin, toHHMM, todayISO, fromISO, uid, bookingCode } from './utils.js';
+import { toMin, toHHMM, todayISO, fromISO, uid } from './utils.js';
 
 const KEY = 'corte-certo:v1';
 const listeners = new Set();
@@ -20,7 +17,7 @@ function load() {
 }
 
 let db = load();
-
+window.debugDB = db;
 function persist() {
   localStorage.setItem(KEY, JSON.stringify(db));
   listeners.forEach((fn) => fn(db));
@@ -31,10 +28,10 @@ export const getDB = () => db;
 export const resetDB = () => { db = structuredClone(SEED); persist(); };
 
 /*  Consultas  */
-export const getService = (id) => db.services.find((s) => s.id === id);
-export const getBarber = (id) => db.barbers.find((b) => b.id === id);
+export const getService = (id) => {if (!id) return null;const cleanId = String(id).toLowerCase();return db.services.find((s) => { const sId = String(s.id).toLowerCase();return sId === cleanId || sId === 's' + cleanId || cleanId === 's' + sId;});};
+export const getBarber = (id) => db.barbers.find((b) => String(b.id) === String(id));
 export const activeServices = () => db.services.filter((s) => s.active);
-export const getBooking = (id) => db.bookings.find((b) => b.id === id);
+export const getBooking = (id) => db.bookings.find((b) => String(b.id) === String(id));
 export const bookingsOn = (date) => db.bookings.filter((b) => b.date === date).sort((a, b) => a.time.localeCompare(b.time));
 
 /** Faixa de bloqueio em minutos (dia todo = 0..1440). */
@@ -50,8 +47,6 @@ export function isDayClosed(date, barberId = null) {
 
 /**
  * Gera os horários de um dia para um barbeiro/serviço, marcando quais estão livres.
- * Regras: dentro do expediente, sem conflito com outros agendamentos ativos do
- * mesmo barbeiro, sem conflito com bloqueios e não pode estar no passado.
  */
 export function getSlots(date, barberId, serviceId, ignoreBookingId = null) {
   const service = getService(serviceId);
@@ -64,39 +59,90 @@ export function getSlots(date, barberId, serviceId, ignoreBookingId = null) {
   const nowMin = date === todayISO() ? now.getHours() * 60 + now.getMinutes() + 15 : -1;
 
   const busy = db.bookings
-    .filter((b) => b.date === date && b.barberId === barberId && b.status !== 'cancelado' && b.id !== ignoreBookingId)
-    .map((b) => [toMin(b.time), toMin(b.time) + getService(b.serviceId).duration]);
+    .filter((b) => b.date === date && String(b.barberId) === String(barberId) && b.status !== 'cancelado' && b.id !== ignoreBookingId)
+    .map((b) => [toMin(b.time), toMin(b.time) + (getService(b.serviceId)?.duration || 30)]);
   const blocked = db.blocks
-    .filter((bl) => bl.date === date && (!bl.barberId || bl.barberId === barberId))
+    .filter((bl) => bl.date === date && (!bl.barberId || String(bl.barberId) === String(barberId)))
     .map(blockRange);
 
   const slots = [];
   for (let t = open; t + service.duration <= close; t += SLOT_STEP) {
-    if (t <= nowMin) continue; // horários que já passaram hoje nem aparecem
+    if (t <= nowMin) continue; 
     const end = t + service.duration;
+    
     const free = !busy.some(([a, b]) => overlaps(t, end, a, b))
       && !blocked.some(([a, b]) => overlaps(t, end, a, b));
+      
     slots.push({ time: toHHMM(t), free });
   }
   return slots;
 }
 
-/*  Mutações: agendamentos  */
-export function createBooking({ serviceId, barberId, date, time, name, phone }) {
-  // Revalida no momento da gravação para evitar dois clientes no mesmo horário
-  const ok = getSlots(date, barberId, serviceId).some((s) => s.time === time && s.free);
-  if (!ok) throw new Error('Esse horário acabou de ser ocupado. Escolha outro.');
-  const booking = {
-    id: uid('bk_'), code: bookingCode(), serviceId, barberId, date, time,
-    name: name.trim(), phone, status: 'confirmado', createdAt: new Date().toISOString(),
-  };
-  db.bookings.push(booking);
-  persist();
-  return booking;
+export async function createBooking(bookingData) {
+  try {
+    const payload = {
+      clientName: bookingData.clientName || bookingData.name,
+      clientPhone: bookingData.clientPhone || bookingData.phone,
+      serviceId: bookingData.serviceId,
+      date: bookingData.date,
+      time: bookingData.time,
+    };
+
+    console.log("DADOS AJUSTADOS PARA O BACKEND:", payload);
+
+    const response = await fetch('http://localhost:3000/api/appointments', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || 'Erro ao criar agendamento.');
+    }
+
+    rememberBooking(data.id);
+
+    return {
+      id: data.id,
+      code: data.code || `#${String(data.id).slice(-4).toUpperCase()}`,
+      serviceId: data.serviceId,
+      barberId: bookingData.barberId || '1',
+      date: data.date,
+      time: data.time,
+      name: data.clientName,
+      phone: data.clientPhone,
+      status: data.status,
+    };
+  } catch (err) {
+    console.error('Erro no createBooking:', err);
+    throw err;
+  }
 }
-export function setBookingStatus(id, status) {
-  const b = getBooking(id);
-  if (b) { b.status = status; persist(); }
+
+export async function setBookingStatus(id, status) {
+  try {
+    const response = await fetch(`http://localhost:3000/api/appointments/${id}/status`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ status }),
+    });
+
+    if (!response.ok) {
+      throw new Error('Erro ao atualizar status do agendamento.');
+    }
+
+    const updated = await response.json();
+    return updated;
+  } catch (err) {
+    console.error('Erro ao alterar status:', err);
+    throw err;
+  }
 }
 
 /*  Mutações: serviços  */
@@ -125,7 +171,64 @@ export const session = {
   get: () => JSON.parse(sessionStorage.getItem(SESSION) || '{}'),
   set(patch) { sessionStorage.setItem(SESSION, JSON.stringify({ ...this.get(), ...patch })); },
 };
-/** IDs dos agendamentos feitos neste navegador (área "Meus agendamentos"). */
+
+/*  Controle de IDs Locais ("Meus Agendamentos")  */
 const MINE = 'corte-certo:mine';
-export const myBookingIds = () => JSON.parse(localStorage.getItem(MINE) || '[]');
-export const rememberBooking = (id) => localStorage.setItem(MINE, JSON.stringify([...new Set([...myBookingIds(), id])]));
+
+export const myBookingIds = () => {
+  try {
+    const stored = JSON.parse(localStorage.getItem(MINE) || '[]');
+    if (!Array.isArray(stored)) return [];
+    return stored.filter(id => id !== null && id !== undefined && id !== '');
+  } catch {
+    return [];
+  }
+};
+
+export const rememberBooking = (id) => {
+  if (!id) return;
+  const currentIds = myBookingIds();
+  const updatedIds = [...new Set([...currentIds, String(id)])];
+  localStorage.setItem(MINE, JSON.stringify(updatedIds));
+};
+
+export async function getMyAppointments() {
+  try {
+    const response = await fetch('http://localhost:3000/api/appointments');
+    if (!response.ok) throw new Error('Erro ao buscar agendamentos');
+    
+    const allAppointments = await response.json();
+    const mineIds = myBookingIds();
+
+    return allAppointments
+      .filter(app => mineIds.some(id => String(id) === String(app.id)))
+      .map(app => ({
+        ...app,
+        code: app.code || `#${String(app.id).slice(-4).toUpperCase()}`,
+        name: app.clientName || app.name,
+        phone: app.clientPhone || app.phone
+      }));
+  } catch (err) {
+    console.error('Erro ao carregar meus agendamentos:', err);
+    return [];
+  }
+}
+export async function syncBookingsWithBackend() {
+  try {
+    const response = await fetch('http://localhost:3000/api/appointments');
+    if (response.ok) {
+      const data = await response.json();
+      
+      db.bookings = data.map((app) => ({
+        id: String(app.id),
+        serviceId: String(app.serviceId),
+        barberId: String(app.barberId || 'b1'),
+        date: app.date,
+        time: app.time,
+        status: app.status || 'confirmado'
+      }));
+    }
+  } catch (err) {
+    console.error('Erro ao sincronizar bookings com backend:', err);
+  }
+}

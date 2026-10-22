@@ -46,7 +46,7 @@ function agendaView() {
         <div class="controls">
           <label class="sr-only" for="st-${b.id}">Status</label>
           <select id="st-${b.id}" data-status="${b.id}">${STATUSES.map((st) => `<option value="${st}" ${st === b.status ? 'selected' : ''}>${STATUS_LABEL[st]}</option>`).join('')}</select>
-          <a class="btn small" href="https://wa.me/55${b.phone.replace(/\D/g, '')}" target="_blank" rel="noopener">WhatsApp</a>
+<a class="btn small" href="https://wa.me/55${(b.phone || '').replace(/\D/g, '')}" target="_blank" rel="noopener">WhatsApp</a>
         </div>
       </article>`;
   }).join('');
@@ -176,8 +176,18 @@ function blockModal() {
 }
 
 /*  Renderização  */
-export function render(direction = 'forward') {
+export async function render(direction = 'forward') {
   if (!isLogged()) return mount(`<div class="wrap wide">${loginView()}</div>`, direction);
+  
+  // Sincroniza com o backend para garantir que os agendamentos mais recentes apareçam no admin
+  if (typeof store.syncBookingsWithBackend === 'function') {
+    try {
+      await store.syncBookingsWithBackend();
+    } catch (err) {
+      console.error('Erro ao sincronizar agendamentos no admin:', err);
+    }
+  }
+
   const views = { agenda: agendaView, services: servicesView, hours: hoursView, blocks: blocksView };
   mount(`
     <div class="wrap wide">

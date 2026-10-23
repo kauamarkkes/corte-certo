@@ -202,3 +202,40 @@ describe('Defeitos adicionais', () => {
         expect(free.status).toBe(200);
     });
 });
+
+describe('Consentimento, bloqueios e serviços (front integrado)', () => {
+    const block = (overrides = {}) => ({ date: MONDAY, start: '12:00', end: '13:00', reason: 'Almoço', ...overrides });
+
+    test('TC-26 whatsappConsent é guardado e o padrão é false', async () => {
+        const withConsent = await book({ whatsappConsent: true });
+        expect(withConsent.status).toBe(201);
+        expect(withConsent.body.whatsappConsent).toBe(true);
+        const without = await book({ time: '11:00' });
+        expect(without.body.whatsappConsent).toBe(false);
+    });
+
+    test('TC-27 PUT de serviço com active não booleano retorna 400', async () => {
+        const res = await request(app).put('/api/services/s1').send({ active: 'abc' });
+        expect(res.status).toBe(400);
+    });
+
+    test('TC-28 agendar dentro de um bloqueio retorna 400', async () => {
+        expect((await request(app).post('/api/blocks').send(block())).status).toBe(201);
+        const res = await book({ time: '12:20' });
+        expect(res.status).toBe(400);
+    });
+
+    test('TC-29 criar bloqueio sobre agendamento ativo retorna 409', async () => {
+        expect((await book({ time: '12:00' })).status).toBe(201);
+        const res = await request(app).post('/api/blocks').send(block());
+        expect(res.status).toBe(409);
+    });
+
+    test('TC-30 remover o bloqueio libera o horário', async () => {
+        const created = await request(app).post('/api/blocks').send(block({ start: null, end: null }));
+        expect(created.status).toBe(201);
+        expect((await book()).status).toBe(400);
+        expect((await request(app).delete(`/api/blocks/${created.body.id}`)).status).toBe(200);
+        expect((await book()).status).toBe(201);
+    });
+});

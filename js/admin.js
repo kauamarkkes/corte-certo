@@ -36,17 +36,22 @@ function loginView() {
 function agendaView() {
   const list = store.bookingsOn(state.agendaDate);
   const count = (s) => list.filter((b) => b.status === s).length;
-  const activeMin = list.filter((b) => b.status !== 'cancelado').reduce((t, b) => t + store.getService(b.serviceId).duration, 0);
+  const activeMin = list.filter((b) => b.status !== 'cancelado').reduce((t, b) => t + (store.getService(b.serviceId)?.duration || 30), 0);
   const items = list.map((b) => {
     const s = store.getService(b.serviceId);
+    const barberName = (store.getBarber(b.barberId)?.name || 'Principal').split(' ')[0];
+    const cleanPhone = (b.phone || '').replace(/\D/g, '');
+    const waBtn = b.whatsappConsent && cleanPhone
+      ? `<a class="btn small" href="https://wa.me/55${cleanPhone}" target="_blank" rel="noopener">WhatsApp</a>`
+      : '';
     return `
       <article class="agenda-item status-${b.status}">
         <time>${b.time}</time>
-        <div><h4>${esc(b.name)}</h4><p class="subtle">${esc(s?.name ?? '—')} · ${esc(store.getBarber(b.barberId).name.split(' ')[0])} · ${esc(b.phone)}</p></div>
+        <div><h4>${esc(b.name)}</h4><p class="subtle">${esc(s?.name ?? '—')} · ${esc(barberName)} · ${esc(b.phone)}</p></div>
         <div class="controls">
           <label class="sr-only" for="st-${b.id}">Status</label>
           <select id="st-${b.id}" data-status="${b.id}">${STATUSES.map((st) => `<option value="${st}" ${st === b.status ? 'selected' : ''}>${STATUS_LABEL[st]}</option>`).join('')}</select>
-<a class="btn small" href="https://wa.me/55${(b.phone || '').replace(/\D/g, '')}" target="_blank" rel="noopener">WhatsApp</a>
+          ${waBtn}
         </div>
       </article>`;
   }).join('');
@@ -97,7 +102,7 @@ function serviceModal(id) {
       <div class="field"><label for="sIcon">Ícone</label><select id="sIcon" name="icon">${['✂', '◆', '⚡', '★', '☻', '✦'].map((i) => `<option ${i === s.icon ? 'selected' : ''}>${i}</option>`).join('')}</select></div>
       <div class="actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary">Salvar serviço</button></div>
     </form>`, (root, close) => {
-    root.querySelector('form').onsubmit = (e) => {
+    root.querySelector('form').onsubmit = async (e) => {
       e.preventDefault();
       const f = new FormData(e.target);
       const name = f.get('name').trim();
@@ -106,8 +111,12 @@ function serviceModal(id) {
       nameInput.classList.toggle('error', !name);
       root.querySelector('#sPrice').classList.toggle('error', !(price > 0));
       if (!name || !(price > 0)) return toast('Preencha nome e preço válidos.', 'error');
-      store.saveService({ ...(id && { id }), name, description: f.get('description').trim(), icon: f.get('icon'), duration: Number(f.get('duration')), price });
-      close(); toast('Serviço salvo com sucesso.'); render();
+      try {
+        await store.saveService({ ...(id && { id }), name, description: f.get('description').trim(), icon: f.get('icon'), duration: Number(f.get('duration')), price });
+        close(); toast('Serviço salvo com sucesso.'); render();
+      } catch (err) {
+        toast(err.message, 'error');
+      }
     };
   });
 }
@@ -139,7 +148,7 @@ function blocksView() {
   const items = list.map((b) => `
     <div class="block-item">
       <div><strong>${formatDayLabel(b.date)} · ${b.start ? `${b.start}–${b.end}` : 'Dia todo'}</strong>
-      <span class="subtle">${esc(b.reason || 'Indisponível')} · ${b.barberId ? esc(store.getBarber(b.barberId).name) : 'Todos'}</span></div>
+      <span class="subtle">${esc(b.reason || 'Indisponível')} · ${b.barberId ? esc(store.getBarber(b.barberId)?.name || 'Todos') : 'Todos'}</span></div>
       <button class="btn small danger" data-remove-block="${b.id}">Remover</button>
     </div>`).join('');
   return `
@@ -163,14 +172,18 @@ function blockModal() {
       <div class="actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary">Criar bloqueio</button></div>
     </form>`, (root, close) => {
     root.querySelector('#bAllDay').onchange = (e) => { root.querySelector('#bRange').hidden = e.target.checked; };
-    root.querySelector('form').onsubmit = (e) => {
+    root.querySelector('form').onsubmit = async (e) => {
       e.preventDefault();
       const f = new FormData(e.target);
       const allDay = f.get('allDay') === 'on';
       if (!f.get('date')) return toast('Escolha uma data.', 'error');
       if (!allDay && toMin(f.get('end')) <= toMin(f.get('start'))) return toast('O fim deve ser depois do início.', 'error');
-      store.addBlock({ date: f.get('date'), start: allDay ? null : f.get('start'), end: allDay ? null : f.get('end'), barberId: f.get('barberId') || null, reason: f.get('reason').trim() });
-      close(); toast('Bloqueio criado com sucesso.'); render();
+      try {
+        await store.addBlock({ date: f.get('date'), start: allDay ? null : f.get('start'), end: allDay ? null : f.get('end'), barberId: f.get('barberId') || null, reason: f.get('reason').trim() });
+        close(); toast('Bloqueio criado com sucesso.'); render();
+      } catch (err) {
+        toast(err.message, 'error');
+      }
     };
   });
 }
@@ -179,7 +192,6 @@ function blockModal() {
 export async function render(direction = 'forward') {
   if (!isLogged()) return mount(`<div class="wrap wide">${loginView()}</div>`, direction);
   
-  // Sincroniza com o backend para garantir que os agendamentos mais recentes apareçam no admin
   if (typeof store.syncBookingsWithBackend === 'function') {
     try {
       await store.syncBookingsWithBackend();
@@ -221,11 +233,13 @@ export function bindAdminEvents(root) {
     if ('logout' in d) { store.session.set({ admin: false }); toast('Sessão encerrada.'); return render('back'); }
     if (d.day) { const dt = new Date(state.agendaDate + 'T12:00'); dt.setDate(dt.getDate() + Number(d.day)); state.agendaDate = dt.toISOString().slice(0, 10); return render(Number(d.day) < 0 ? 'back' : 'forward'); }
     if (d.editService !== undefined) return serviceModal(d.editService || null);
-    if (d.toggleService) { store.toggleService(d.toggleService); return render(); }
+    if (d.toggleService) {
+      try { await store.toggleService(d.toggleService); return render(); } catch (err) { return toast(err.message, 'error'); }
+    }
     if (d.removeService) {
       const s = store.getService(d.removeService);
       if (await confirmDialog({ title: 'Remover serviço?', text: `"${esc(s.name)}" deixará de existir no catálogo.`, confirm: 'Remover' })) {
-        try { store.removeService(s.id); toast('Serviço removido.'); render(); } catch (err) { toast(err.message, 'error'); }
+        try { await store.removeService(s.id); toast('Serviço removido.'); render(); } catch (err) { toast(err.message, 'error'); }
       }
       return;
     }
@@ -234,16 +248,30 @@ export function bindAdminEvents(root) {
     if ('saveHours' in d) {
       const bad = state.hoursDraft.findIndex((h) => h.open && toMin(h.end) <= toMin(h.start));
       if (bad >= 0) return toast(`${WEEKDAYS_ABBR[bad]}: fechamento deve ser após a abertura.`, 'error');
-      store.saveHours(state.hoursDraft); state.hoursDraft = null; return toast('Alterações salvas com sucesso.');
+      try {
+        await store.saveHours(state.hoursDraft); state.hoursDraft = null; toast('Alterações salvas com sucesso.'); return render();
+      } catch (err) {
+        return toast(err.message, 'error');
+      }
     }
     if ('newBlock' in d) return blockModal();
-    if (d.removeBlock) { store.removeBlock(d.removeBlock); toast('Bloqueio removido.'); return render(); }
+    if (d.removeBlock) {
+      try { await store.removeBlock(d.removeBlock); toast('Bloqueio removido.'); return render(); } catch (err) { return toast(err.message, 'error'); }
+    }
   });
 
-  root.addEventListener('change', (e) => {
+  root.addEventListener('change', async (e) => {
     if (!on()) return;
     const el = e.target;
-    if (el.dataset.status) { store.setBookingStatus(el.dataset.status, el.value); toast(`Status: ${STATUS_LABEL[el.value]}.`); render(); }
+    if (el.dataset.status) {
+      try {
+        await store.setBookingStatus(el.dataset.status, el.value);
+        toast(`Status: ${STATUS_LABEL[el.value]}.`);
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+      render();
+    }
     if (el.id === 'agendaDate' && el.value) { state.agendaDate = el.value; render(); }
     if (el.dataset.hour) state.hoursDraft[el.dataset.hour][el.dataset.key] = el.value;
   });

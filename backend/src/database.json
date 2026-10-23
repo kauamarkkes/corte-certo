@@ -3,6 +3,7 @@
     {
       "id": "s1",
       "name": "Corte clássico",
+      "description": "Máquina e tesoura com acabamento preciso.",
       "price": 45,
       "duration": 40,
       "active": true,
@@ -11,18 +12,20 @@
     {
       "id": "s2",
       "name": "Barba completa",
+      "description": "Toalha quente, desenho e finalização.",
       "price": 35,
       "duration": 30,
       "active": true,
-      "icon": "🪒"
+      "icon": "◆"
     },
     {
       "id": "s3",
       "name": "Corte + barba",
+      "description": "O combo completo para renovar o visual.",
       "price": 70,
       "duration": 60,
       "active": true,
-      "icon": "💈"
+      "icon": "⚡"
     }
   ],
   "appointments": [],

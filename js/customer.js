@@ -240,6 +240,7 @@ export async function render(direction = 'forward') {
     return; 
   }
   if (view === 'plans') { mount(`<div class="wrap">${plansScreen()}</div>`, direction); return; }
+  if (draft.step === 1 || draft.step === 3) await store.syncBookingsWithBackend();
   if (draft.step === 3) autoPickDate();
   
   const steps = { 1: stepServices, 2: stepBarbers, 3: stepDateTime, 4: stepForm, 5: stepSuccess };
@@ -327,10 +328,13 @@ export function bindCustomerEvents(root) {
     if (!valid) { form.querySelector('.error')?.focus(); return; }
     
     try {
+      const consent = Boolean(form.elements.namedItem('consent')?.checked);
+      draft.consent = consent;
       const booking = await store.createBooking({ 
         ...draft, 
         name: form.elements.namedItem('name').value, 
-        phone: form.elements.namedItem('phone').value 
+        phone: form.elements.namedItem('phone').value,
+        whatsappConsent: consent,
       });
       draft.lastBookingId = booking.id;
       toast(`Agendamento ${booking.code} criado!`);

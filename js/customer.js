@@ -357,8 +357,8 @@ export async function showCustomer() {
 export function plansScreen() {
   return `
     <span class="eyebrow">Economize todo mês</span>
-    <h1 class="page-title">PLANOS MENSAIS</h1>
-    <p class="lede">Corte o cabelo e faça a barba quantas vezes quiser com valor fixo no mês.</p>
+    <h1 class="page-title">PLANO MENSAL</h1>
+    <p class="lede">Corte o cabelo quantas vezes quiser com valor fixo no mês.</p>
 
     <div class="grid cols-3 stagger" style="margin-bottom: 30px;">
       <div class="card" style="padding: 20px; background: var(--paper); border: var(--line); box-shadow: var(--shadow);">
@@ -366,74 +366,15 @@ export function plansScreen() {
         <h2 style="font-family: 'Archivo Black'; font-size: 28px; margin: 10px 0 5px;">Cabelo Livre</h2>
         <p class="subtle">Cortes ilimitados no mês todo.</p>
         <div style="font-size: 32px; font-weight: 900; margin: 15px 0; color: var(--ink);">
-          R$ 99,90 <small style="font-size: 14px; color: var(--muted);">/mês</small>
+          R$ 110,00 <small style="font-size: 14px; color: var(--muted);">/mês</small>
         </div>
         <ul style="padding-left: 18px; margin-bottom: 20px; font-size: 14px; font-weight: 600;">
           <li>Cortes de cabelo ilimitados</li>
           <li>10% de desconto em produtos</li>
-          <li>Agendamento prioritário</li>
+          <li>Assine Presencialmente!!</li>
         </ul>
-        <button type="button" class="btn primary" style="width: 100%;" onclick="document.getElementById('planForm').scrollIntoView({behavior: 'smooth'})">Assinar Básico</button>
+        <button type="button" class="btn primary" style="width: 100%;" onclick="document.getElementById('planForm').scrollIntoView({behavior: 'smooth'})">Apenas Presencial</button>
       </div>
 
-      <div class="card" style="padding: 20px; background: var(--paper); border: 4px solid var(--ink); box-shadow: 8px 8px 0 var(--green);">
-        <span class="pill" style="background: var(--green); font-weight: 900;">POPULAR</span>
-        <h2 style="font-family: 'Archivo Black'; font-size: 28px; margin: 10px 0 5px;">VIP Combo</h2>
-        <p class="subtle">Cabelo e barba ilimitados durante todo o mês.</p>
-        <div style="font-size: 32px; font-weight: 900; margin: 15px 0; color: var(--ink);">
-          R$ 149,90 <small style="font-size: 14px; color: var(--muted);">/mês</small>
-        </div>
-        <ul style="padding-left: 18px; margin-bottom: 20px; font-size: 14px; font-weight: 600;">
-          <li>Cortes e Barbas ilimitados</li>
-          <li>Bebida cortesia a cada visita</li>
-          <li>15% de desconto em produtos</li>
-        </ul>
-        <button type="button" class="btn primary" style="width: 100%; background: var(--green);" onclick="document.getElementById('planForm').scrollIntoView({behavior: 'smooth'})">Assinar VIP</button>
-      </div>
-    </div>
-
-    <div id="planForm" class="form-card" style="max-width: 600px; margin: 0 auto; padding: 25px; background: var(--paper); border: var(--line); box-shadow: var(--shadow);">
-      <span class="eyebrow">Cadastro da Assinatura</span>
-      <h2 style="font-family: 'Archivo Black'; font-size: 24px; margin-top: 5px;">Seus Dados</h2>
-      
-      <form id="planSubscriptionForm">
-        <div class="field" style="margin-top: 15px;">
-          <label>Plano Escolhido</label>
-          <select id="pPlan" required style="width: 100%; height: 48px; border: 2px solid var(--ink); padding: 0 10px; font-weight: 700;">
-            <option value="vip">VIP Combo — R$ 149,90/mês</option>
-            <option value="basico">Básico (Cabelo) — R$ 99,90/mês</option>
-          </select>
-        </div>
-
-        <div class="field">
-          <label for="pName">Nome Completo</label>
-          <input id="pName" type="text" placeholder="Ex.: João da Silva" maxlength="50" required style="width: 100%; height: 48px; border: 2px solid var(--ink); padding: 0 10px;">
-        </div>
-
-        <div class="field">
-          <label for="pPhone">WhatsApp</label>
-          <input id="pPhone" type="tel" inputmode="numeric" placeholder="(81) 99999-9999" maxlength="15" required style="width: 100%; height: 48px; border: 2px solid var(--ink); padding: 0 10px;">
-        </div>
-
-        <div class="field">
-          <label for="pCpf">CPF</label>
-          <input id="pCpf" type="text" inputmode="numeric" placeholder="000.000.000-00" maxlength="14" required style="width: 100%; height: 48px; border: 2px solid var(--ink); padding: 0 10px;">
-        </div>
-
-        <div class="field">
-          <label for="pPayment">Forma de Pagamento</label>
-          <select id="pPayment" required style="width: 100%; height: 48px; border: 2px solid var(--ink); padding: 0 10px; font-weight: 700;">
-            <option value="pix">Pix (Recorrência Mensal)</option>
-            <option value="card">Cartão de Crédito</option>
-            <option value="boleto">Boleto Bancário</option>
-          </select>
-        </div>
-
-        <div class="actions" style="margin-top: 20px;">
-          <button type="button" class="btn" data-action="services">← Voltar</button>
-          <button type="submit" class="btn primary">Finalizar Assinatura →</button>
-        </div>
-      </form>
-    </div>
   `;
 }

@@ -2,10 +2,23 @@
  * store.js — Estado da aplicação com integração ao backend e persistência no localStorage.
  */
 import { SEED, SLOT_STEP } from './data.js';
-import { toMin, toHHMM, todayISO, fromISO, uid } from './utils.js';
+import { toMin, toHHMM, todayISO, fromISO } from './utils.js';
 
 const KEY = 'corte-certo:v1';
+const API_URL = 'http://localhost:3000/api';
 const listeners = new Set();
+
+async function requestAPI(path, method = 'GET', payload = undefined, fallbackError = 'Erro na requisição.') {
+  const options = { method };
+  if (payload !== undefined) {
+    options.headers = { 'Content-Type': 'application/json' };
+    options.body = JSON.stringify(payload);
+  }
+  const res = await fetch(`${API_URL}${path}`, options);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || fallbackError);
+  return body;
+}
 
 /** Carrega o estado salvo ou cria um novo a partir do seed. */
 function load() {
@@ -86,36 +99,23 @@ export async function createBooking(bookingData) {
       serviceId: bookingData.serviceId,
       date: bookingData.date,
       time: bookingData.time,
+      whatsappConsent: Boolean(bookingData.whatsappConsent ?? bookingData.consent),
     };
 
-    console.log("DADOS AJUSTADOS PARA O BACKEND:", payload);
-
-    const response = await fetch('http://localhost:3000/api/appointments', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.error || 'Erro ao criar agendamento.');
-    }
-
+    const data = await requestAPI('/appointments', 'POST', payload, 'Erro ao criar agendamento.');
     rememberBooking(data.id);
 
     return {
       id: data.id,
       code: data.code || `#${String(data.id).slice(-4).toUpperCase()}`,
       serviceId: data.serviceId,
-      barberId: bookingData.barberId || '1',
+      barberId: bookingData.barberId || 'b1',
       date: data.date,
       time: data.time,
       name: data.clientName,
       phone: data.clientPhone,
       status: data.status,
+      whatsappConsent: Boolean(data.whatsappConsent),
     };
   } catch (err) {
     console.error('Erro no createBooking:', err);
@@ -125,20 +125,7 @@ export async function createBooking(bookingData) {
 
 export async function setBookingStatus(id, status) {
   try {
-    const response = await fetch(`http://localhost:3000/api/appointments/${id}/status`, {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ status }),
-    });
-
-    if (!response.ok) {
-      throw new Error('Erro ao atualizar status do agendamento.');
-    }
-
-    const updated = await response.json();
-    return updated;
+    return await requestAPI(`/appointments/${id}/status`, 'PATCH', { status }, 'Erro ao atualizar status do agendamento.');
   } catch (err) {
     console.error('Erro ao alterar status:', err);
     throw err;
@@ -146,24 +133,52 @@ export async function setBookingStatus(id, status) {
 }
 
 /*  Mutações: serviços  */
-export function saveService(data) {
-  if (data.id) Object.assign(getService(data.id), data);
-  else db.services.push({ ...data, id: uid('s_'), active: true, icon: data.icon || '✂' });
+export async function saveService(data) {
+  if (data.id) {
+    const body = await requestAPI(`/services/${data.id}`, 'PUT', data, 'Erro ao atualizar serviço.');
+    const existing = getService(data.id);
+    if (existing) Object.assign(existing, body);
+  } else {
+    const body = await requestAPI('/services', 'POST', data, 'Erro ao criar serviço.');
+    db.services.push({ description: data.description || '', ...body });
+  }
   persist();
 }
-export function toggleService(id) { const s = getService(id); s.active = !s.active; persist(); }
-export function removeService(id) {
-  if (db.bookings.some((b) => b.serviceId === id && b.status !== 'cancelado' && b.date >= todayISO())) {
+
+export async function toggleService(id) {
+  const s = getService(id);
+  if (!s) return;
+  const body = await requestAPI(`/services/${s.id}`, 'PUT', { active: !s.active }, 'Erro ao alterar status do serviço.');
+  s.active = body.active;
+  persist();
+}
+
+export async function removeService(id) {
+  if (db.bookings.some((b) => String(b.serviceId) === String(id) && b.status !== 'cancelado' && b.date >= todayISO())) {
     throw new Error('Existem agendamentos futuros com esse serviço. Desative-o em vez de remover.');
   }
-  db.services = db.services.filter((s) => s.id !== id);
+  await requestAPI(`/services/${id}`, 'DELETE', undefined, 'Erro ao remover serviço.');
+  db.services = db.services.filter((s) => String(s.id) !== String(id));
   persist();
 }
 
 /*  Mutações: funcionamento e bloqueios  */
-export function saveHours(hours) { db.hours = hours; persist(); }
-export function addBlock(block) { db.blocks.push({ ...block, id: uid('bl_') }); persist(); }
-export function removeBlock(id) { db.blocks = db.blocks.filter((b) => b.id !== id); persist(); }
+export async function saveHours(hours) {
+  db.hours = await requestAPI('/hours', 'PUT', hours, 'Erro ao salvar horários.');
+  persist();
+}
+
+export async function addBlock(block) {
+  const body = await requestAPI('/blocks', 'POST', block, 'Erro ao criar bloqueio.');
+  db.blocks.push(body);
+  persist();
+}
+
+export async function removeBlock(id) {
+  await requestAPI(`/blocks/${id}`, 'DELETE', undefined, 'Erro ao remover bloqueio.');
+  db.blocks = db.blocks.filter((b) => String(b.id) !== String(id));
+  persist();
+}
 
 /*  Sessão (cliente e admin)  */
 const SESSION = 'corte-certo:session';
@@ -194,10 +209,7 @@ export const rememberBooking = (id) => {
 
 export async function getMyAppointments() {
   try {
-    const response = await fetch('http://localhost:3000/api/appointments');
-    if (!response.ok) throw new Error('Erro ao buscar agendamentos');
-    
-    const allAppointments = await response.json();
+    const allAppointments = await requestAPI('/appointments', 'GET', undefined, 'Erro ao buscar agendamentos');
     const mineIds = myBookingIds();
 
     return allAppointments
@@ -213,22 +225,59 @@ export async function getMyAppointments() {
     return [];
   }
 }
+
 export async function syncBookingsWithBackend() {
   try {
-    const response = await fetch('http://localhost:3000/api/appointments');
-    if (response.ok) {
-      const data = await response.json();
-      
+    const [appRes, srvRes, hrsRes, blkRes] = await Promise.all([
+      fetch(`${API_URL}/appointments`),
+      fetch(`${API_URL}/services`),
+      fetch(`${API_URL}/hours`),
+      fetch(`${API_URL}/blocks`),
+    ]);
+
+    if (srvRes.ok) {
+      const services = await srvRes.json();
+      if (Array.isArray(services) && services.length > 0) {
+        db.services = services.map((s) => ({
+          description: '',
+          ...SEED.services.find((seed) => seed.id === s.id),
+          ...s,
+        }));
+      }
+    }
+
+    if (hrsRes.ok) {
+      const hours = await hrsRes.json();
+      if (Array.isArray(hours) && hours.length === 7) {
+        db.hours = hours;
+      }
+    }
+
+    if (blkRes.ok) {
+      const blocks = await blkRes.json();
+      if (Array.isArray(blocks)) {
+        db.blocks = blocks;
+      }
+    }
+
+    if (appRes.ok) {
+      const data = await appRes.json();
       db.bookings = data.map((app) => ({
         id: String(app.id),
+        code: app.code || `#${String(app.id).slice(-4).toUpperCase()}`,
         serviceId: String(app.serviceId),
         barberId: String(app.barberId || 'b1'),
         date: app.date,
         time: app.time,
-        status: app.status || 'confirmado'
+        name: app.clientName || app.name || 'Cliente',
+        phone: app.clientPhone || app.phone || '',
+        status: app.status || 'confirmado',
+        whatsappConsent: Boolean(app.whatsappConsent),
       }));
     }
+
+    persist();
   } catch (err) {
-    console.error('Erro ao sincronizar bookings com backend:', err);
+    console.error('Erro ao sincronizar dados com backend:', err);
   }
 }

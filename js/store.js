@@ -66,10 +66,15 @@ export function getSlots(date, barberId, serviceId, ignoreBookingId = null) {
   const day = db.hours[fromISO(date).getDay()];
   if (!service || !day.open || isDayClosed(date, barberId)) return [];
 
-  const open = toMin(day.start);
-  const close = toMin(day.end);
-  const now = new Date();
-  const nowMin = date === todayISO() ? now.getHours() * 60 + now.getMinutes() + 15 : -1;
+  const periods = day.periods || [
+  { start: '08:00', end: '12:00' },
+  { start: '13:00', end: '18:00' }
+];
+
+const now = new Date();
+const nowMin = date === todayISO()
+  ? now.getHours() * 60 + now.getMinutes() + 15
+  : -1;
 
   const busy = db.bookings
     .filter((b) => b.date === date && String(b.barberId) === String(barberId) && b.status !== 'cancelado' && b.id !== ignoreBookingId)
@@ -79,16 +84,31 @@ export function getSlots(date, barberId, serviceId, ignoreBookingId = null) {
     .map(blockRange);
 
   const slots = [];
-  for (let t = open; t + service.duration <= close; t += SLOT_STEP) {
-    if (t <= nowMin) continue; 
+
+for (const period of periods) {
+  const open = toMin(period.start);
+  const close = toMin(period.end);
+
+  for (
+    let t = open;
+    t + service.duration <= close;
+    t += SLOT_STEP
+  ) {
+    if (t <= nowMin) continue;
+
     const end = t + service.duration;
-    
-    const free = !busy.some(([a, b]) => overlaps(t, end, a, b))
-      && !blocked.some(([a, b]) => overlaps(t, end, a, b));
-      
+
+    const free =
+      !busy.some(([a, b]) => overlaps(t, end, a, b)) &&
+      !blocked.some(([a, b]) => overlaps(t, end, a, b));
+
     slots.push({ time: toHHMM(t), free });
   }
-  return slots;
+}
+
+slots.sort((a, b) => a.time.localeCompare(b.time));
+
+return slots;
 }
 
 export async function createBooking(bookingData) {

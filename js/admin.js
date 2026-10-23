@@ -123,20 +123,74 @@ function serviceModal(id) {
 
 /*  Funcionamento  */
 function hoursView() {
-  state.hoursDraft ??= structuredClone(store.getDB().hours);
-  const rows = state.hoursDraft.map((h, i) => `
-    <div class="hour-row ${h.open ? '' : 'off'}">
-      <strong>${WEEKDAYS_ABBR[i]}</strong>
-      <button type="button" class="switch" role="switch" aria-checked="${h.open}" aria-label="Abrir ${WEEKDAYS_ABBR[i]}" data-switch="${i}"></button>
-      <div class="range">
-        <input type="time" value="${h.start}" data-hour="${i}" data-key="start" aria-label="Abertura" /> até
-        <input type="time" value="${h.end}" data-hour="${i}" data-key="end" aria-label="Fechamento" />
-        ${h.open ? '' : '<span class="pill">Fechado</span>'}
-      </div>
-    </div>`).join('');
+  state.hoursDraft ??= structuredClone(store.getDB().hours).map((h) => ({
+  ...h,
+  periods: h.periods || [
+    { start: '08:00', end: '12:00' },
+    { start: '13:00', end: '18:00' }
+  ]
+}));
+
+const rows = state.hoursDraft.map((h, i) => `
+  <div class="hour-row ${h.open ? '' : 'off'}">
+    <strong>${WEEKDAYS_ABBR[i]}</strong>
+    <button
+      type="button"
+      class="switch"
+      role="switch"
+      aria-checked="${h.open}"
+      aria-label="Abrir ${WEEKDAYS_ABBR[i]}"
+      data-switch="${i}">
+    </button>
+    <div class="range periods-range">
+      <label>
+        1º período
+        <input
+          type="time"
+          value="${h.periods[0].start}"
+          data-hour="${i}"
+          data-period="0"
+          data-key="start"
+          aria-label="Início do primeiro período"
+        />
+        até
+        <input
+          type="time"
+          value="${h.periods[0].end}"
+          data-hour="${i}"
+          data-period="0"
+          data-key="end"
+          aria-label="Fim do primeiro período"
+        />
+      </label>
+
+      <label>
+        2º período
+        <input
+          type="time"
+          value="${h.periods[1].start}"
+          data-hour="${i}"
+          data-period="1"
+          data-key="start"
+          aria-label="Início do segundo período"
+        />
+        até
+        <input
+          type="time"
+          value="${h.periods[1].end}"
+          data-hour="${i}"
+          data-period="1"
+          data-key="end"
+          aria-label="Fim do segundo período"
+        />
+      </label>
+      ${h.open ? '' : '<span class="pill">Fechado</span>'}
+    </div>
+  </div>
+`).join('');
   return `
     <div class="section-head"><div><p class="eyebrow">Configuração semanal</p><h1 class="page-title">Horários de funcionamento</h1>
-      <p class="subtle">Defina os períodos disponíveis em cada dia. O cliente só vê horários dentro deles.</p></div></div>
+      <p class="subtle">Configure os dois períodos de atendimento. O intervalo entre eles fica indisponível para agendamentos.</p></div></div>
     <div class="hours stagger">${rows}</div>
     <div class="actions"><button class="btn" data-reset-hours>Desfazer</button><button class="btn primary" data-save-hours>Salvar alterações</button></div>`;
 }
@@ -246,8 +300,24 @@ export function bindAdminEvents(root) {
     if (d.switch) { const h = state.hoursDraft[d.switch]; h.open = !h.open; return render(); }
     if ('resetHours' in d) { state.hoursDraft = null; return render(); }
     if ('saveHours' in d) {
-      const bad = state.hoursDraft.findIndex((h) => h.open && toMin(h.end) <= toMin(h.start));
-      if (bad >= 0) return toast(`${WEEKDAYS_ABBR[bad]}: fechamento deve ser após a abertura.`, 'error');
+      const bad = state.hoursDraft.findIndex((h) =>
+  h.open && (
+    !h.periods ||
+    h.periods.length !== 2 ||
+    h.periods.some(
+      (p) => toMin(p.end) <= toMin(p.start)
+    ) ||
+      toMin(h.periods[0].end) >
+      toMin(h.periods[1].start)
+    )
+  );
+
+    if (bad >= 0) {
+      return toast(
+    `${WEEKDAYS_ABBR[bad]}: confira os horários dos dois períodos.`,
+    'error'
+  );
+}
       try {
         await store.saveHours(state.hoursDraft); state.hoursDraft = null; toast('Alterações salvas com sucesso.'); return render();
       } catch (err) {
@@ -273,6 +343,15 @@ export function bindAdminEvents(root) {
       render();
     }
     if (el.id === 'agendaDate' && el.value) { state.agendaDate = el.value; render(); }
-    if (el.dataset.hour) state.hoursDraft[el.dataset.hour][el.dataset.key] = el.value;
+    if (el.dataset.hour) {
+  const h = state.hoursDraft[el.dataset.hour];
+  const period = el.dataset.period;
+
+  if (period !== undefined) {
+    h.periods[Number(period)][el.dataset.key] = el.value;
+  } else {
+    h[el.dataset.key] = el.value;
+  }
+}
   });
 }

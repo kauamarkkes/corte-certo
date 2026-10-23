@@ -14,14 +14,14 @@ export const SEED = {
   ],
   // Horário de funcionamento por dia da semana (0 = domingo)
   hours: [
-    { open: false, start: '09:00', end: '13:00' },
-    { open: true, start: '09:00', end: '19:00' },
-    { open: true, start: '09:00', end: '19:00' },
-    { open: true, start: '09:00', end: '19:00' },
-    { open: true, start: '09:00', end: '20:00' },
-    { open: true, start: '09:00', end: '20:00' },
-    { open: true, start: '08:00', end: '16:00' },
-  ],
+  { open: false, periods: [{ start: '08:00', end: '12:00' }, { start: '13:00', end: '18:00' }] },
+  { open: true, periods: [{ start: '08:00', end: '12:00' }, { start: '13:00', end: '18:00' }] },
+  { open: true, periods: [{ start: '08:00', end: '12:00' }, { start: '13:00', end: '18:00' }] },
+  { open: true, periods: [{ start: '08:00', end: '12:00' }, { start: '13:00', end: '18:00' }] },
+  { open: true, periods: [{ start: '08:00', end: '12:00' }, { start: '13:00', end: '18:00' }] },
+  { open: true, periods: [{ start: '08:00', end: '12:00' }, { start: '13:00', end: '18:00' }] },
+  { open: true, periods: [{ start: '08:00', end: '12:00' }, { start: '13:00', end: '18:00' }] },
+],
   // Bloqueios: date (YYYY-MM-DD), start/end (null = dia todo), barberId (null = todos)
   blocks: [],
   bookings: [],

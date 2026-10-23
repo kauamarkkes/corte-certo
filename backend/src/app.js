@@ -175,9 +175,29 @@ app.get('/api/hours', (req, res) => {
 
 app.put('/api/hours', (req, res) => {
     const hours = req.body;
-    if (!Array.isArray(hours) || hours.length !== 7) {
-        return res.status(400).json({ error: 'Configuração de horários inválida.' });
-    }
+
+if (
+  !Array.isArray(hours) ||
+  hours.length !== 7 ||
+  hours.some(h =>
+    h.open && (
+      !Array.isArray(h.periods) ||
+      h.periods.length !== 2 ||
+      h.periods.some(p =>
+        !isValidTime(p.start) ||
+        !isValidTime(p.end) ||
+        timeToMinutes(p.end) <= timeToMinutes(p.start)
+      ) ||
+      timeToMinutes(h.periods[0].end) >
+        timeToMinutes(h.periods[1].start)
+    )
+  )
+) {
+  return res.status(400).json({
+    error: 'Configuração de horários inválida.'
+  });
+}
+
     const db = readDb();
     db.hours = hours;
     writeDb(db);
@@ -280,12 +300,40 @@ app.post('/api/appointments', (req, res) => {
     const newEndMin = newStartMin + (service.duration || 30);
 
     const dayHours = (db.hours || [])[parsedDate.getDay()];
+
     if (!dayHours || !dayHours.open) {
-        return res.status(400).json({ error: 'A barbearia está fechada neste dia.' });
+    return res.status(400).json({
+        error: 'A barbearia está fechada neste dia.'
+    });
     }
-    if (newStartMin < timeToMinutes(dayHours.start) || newEndMin > timeToMinutes(dayHours.end)) {
-        return res.status(400).json({ error: `Horário fora do expediente (${dayHours.start} às ${dayHours.end}).` });
+
+    const periods = dayHours.periods || [
+    { start: '08:00', end: '12:00' },
+    { start: '13:00', end: '18:00' }
+    ];
+
+    const fitsPeriod = periods.some(period =>
+    newStartMin >= timeToMinutes(period.start) &&
+    newEndMin <= timeToMinutes(period.end)
+    );
+
+    if (!fitsPeriod) {
+    return res.status(400).json({
+        error: 'Horário fora dos períodos de funcionamento.'
+    });
     }
+
+    if (hasBlockConflict(db, date, newStartMin, newEndMin)) {
+    return res.status(400).json({
+        error: 'Este horário está bloqueado.'
+    });
+}
+
+    if (hasConflict(db, date, newStartMin, newEndMin)) {
+    return res.status(400).json({
+        error: 'Este horário conflita com outro agendamento existente.'
+    });
+}
 
     if (hasBlockConflict(db, date, newStartMin, newEndMin)) {
         return res.status(400).json({ error: 'Este horário está bloqueado.' });
